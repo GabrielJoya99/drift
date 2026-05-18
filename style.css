@@ -1,0 +1,82 @@
+/* ── Reset & base ── */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #050a0f;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  font-family: 'Space Mono', monospace;
+  color: #c8e6f0;
+  user-select: none;
+}
+
+/* ── HUD bar above the canvas ── */
+#hud {
+  display: flex;
+  gap: 28px;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  margin-bottom: 10px;
+}
+
+#hud span {
+  color: #00e5ff;
+  font-weight: 700;
+}
+
+/* ── Canvas wrapper (needed so the overlay can sit on top) ── */
+#wrap {
+  position: relative;
+  border: 1px solid #2a4a60;
+}
+
+canvas {
+  display: block;
+}
+
+/* ── Start / game-over overlay ── */
+#overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 10, 15, 0.85);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+#overlay h2 {
+  font-size: 28px;
+  color: #00e5ff;
+  letter-spacing: 0.2em;
+}
+
+#overlay p {
+  font-size: 11px;
+  color: #2a4a60;
+  letter-spacing: 0.3em;
+}
+
+#overlay button {
+  padding: 9px 30px;
+  background: transparent;
+  border: 1px solid #00e5ff;
+  color: #00e5ff;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0.3em;
+  cursor: pointer;
+}
+
+#overlay button:hover {
+  background: #00e5ff;
+  color: #050a0f;
+}

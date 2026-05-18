@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>DRIFT</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+
+  <!-- ============================================================
+    CSS
+  ============================================================ -->
+  <style>
+
+    /* ── Reset: remove browser defaults, use border-box sizing ── */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    /* ── Page: dark background, everything centred ── */
+    body {
+      background: #050a0f;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-family: 'Space Mono', monospace;
+      color: #c8e6f0;
+      user-select: none; /* prevent text selection during gameplay */
+    }
+
+    /* ── HUD row above the canvas ── */
+    #hud {
+      display: flex;
+      gap: 24px;
+      font-size: 12px;
+      letter-spacing: 0.1em;
+      margin-bottom: 6px;
+    }
+    #hud span { color: #00e5ff; font-weight: 700; } /* value text is bright cyan */
+
+    /* ── Power-up status row (shown below the main HUD) ── */
+    #pup-hud {
+      display: flex;
+      gap: 20px;
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      margin-bottom: 6px;
+      height: 16px; /* fixed height so the canvas doesn't jump when it appears */
+    }
+
+    /* ── Canvas wrapper: position:relative so overlay can sit on top ── */
+    #wrap { position: relative; border: 1px solid #2a4a60; }
+    canvas { display: block; }
+
+    /* ── Start / game-over overlay ── */
+    #overlay {
+      position: absolute; inset: 0;
+      background: rgba(5,10,15,0.85);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 14px;
+    }
+    #overlay h2 { font-size: 28px; color: #00e5ff; letter-spacing: 0.2em; }
+    #overlay p  { font-size: 11px; color: #2a4a60; letter-spacing: 0.3em; }
+    #overlay button {
+      padding: 9px 30px; background: transparent;
+      border: 1px solid #00e5ff; color: #00e5ff;
+      font-family: inherit; font-size: 12px; letter-spacing: 0.3em; cursor: pointer;
+    }
+    #overlay button:hover { background: #00e5ff; color: #050a0f; }
+
+    /* ── Difficulty slider container ── */
+    #diff-wrap { display: flex; flex-direction: column; align-items: center; width: 220px; }
+
+    /* Slider track: thin dark line */
+    #diff {
+      -webkit-appearance: none;
+      width: 100%; height: 2px;
+      background: #2a4a60;
+      outline: none; cursor: pointer;
+    }
+    /* Slider thumb (WebKit: Chrome/Safari) */
+    #diff::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: #00e5ff; border: 2px solid #050a0f;
+    }
+    /* Slider thumb (Firefox) */
+    #diff::-moz-range-thumb {
+      width: 14px; height: 14px; border-radius: 50%;
+      background: #00e5ff; border: 2px solid #050a0f;
+    }
+
+    /* End labels under the slider ("EASY" … "HELL") */
+    #diff-labels {
+      display: flex; justify-content: space-between;
+      width: 100%; font-size: 10px;
+      color: #2a4a60; letter-spacing: 0.15em;
+      margin-top: 6px;
+    }
+
+  </style>
+</head>
+<body>
+
+
+  <!-- ============================================================
+    HTML
+  ============================================================ -->
+
+  <!-- Main HUD row: score / best / level / hull -->
+  <div id="hud">
+    <div>SCORE <span id="sc">000000</span></div>
+    <div>BEST  <span id="bs">000000</span></div>
+    <div>LEVEL <span id="lv" style="color:#ff9a3c">01</span></div>
+    <div>HULL  <span id="hp">❤❤❤</span></div>
+  </div>
+
+  <!-- Secondary HUD row: active power-up timers (empty until a power-up is collected) -->
+  <div id="pup-hud">
+    <span id="sh-hud" style="color:#00e5ff; display:none">🛡 SHIELD <span id="sh-t"></span>s</span>
+    <span id="gn-hud" style="color:#ffdf80; display:none">🔫 GUN <span id="gn-t"></span>s</span>
+  </div>
+
+  <!-- Game canvas + overlay wrapper -->
+  <div id="wrap">
+    <canvas id="c" width="480" height="520"></canvas>
+
+    <!-- Start / game-over screen -->
+    <div id="overlay">
+      <h2>DRIFT</h2>
+      <p>ASTEROID FIELD SURVIVAL</p>
+      <p id="result" style="color:#c8e6f0"></p>
+
+      <!-- Difficulty slider (hidden on the retry screen) -->
+      <div id="diff-wrap">
+        <p style="color:#c8e6f0; margin-bottom:6px; text-align:center">DIFFICULTY</p>
+        <input type="range" id="diff" min="1" max="5" value="1" step="1">
+        <div id="diff-labels">
+          <span>EASY</span><span>·</span><span>·</span><span>·</span><span>HELL</span>
+        </div>
+        <p id="diff-desc" style="color:#00e5ff; margin-top:6px; text-align:center">Level 1 — calm start</p>
+      </div>
+
+      <!-- Controls hint shown under the button -->
+      <button id="btn">LAUNCH</button>
+      <p>← → / A D  to move  ·  SPACE to shoot</p>
+    </div>
+  </div>
+
+
+  <!-- ============================================================
+    JAVASCRIPT
+  ============================================================ -->
+  <script>
+
+    // ═══════════════════════════════════════════════════════════════
+    //  SETUP — canvas context and DOM references
+    // ═══════════════════════════════════════════════════════════════
+
+    const c   = document.getElementById('c');
+    const ctx = c.getContext('2d');
+    const W = 480, H = 520; // canvas size in pixels
+
+    // Overlay elements
+    const overlay    = document.getElementById('overlay');
+    const btn        = document.getElementById('btn');
+    const diffSlider = document.getElementById('diff');
+    const diffDesc   = document.getElementById('diff-desc');
+    const diffWrap   = document.getElementById('diff-wrap');
+
+
+    // ═══════════════════════════════════════════════════════════════
+    //  DIFFICULTY SETTINGS
+    //  Each slider position maps to a label and a starting score.
+    //  Score drives level (every 150 pts = +1 level), so jumping the
+    //  score forward puts the player straight into a harder level.
+    // ═══════════════════════════════════════════════════════════════
+
+    const DIFF_INFO = [
+      { label: 'Level 1 — calm start',     score: 0    },
+      { label: 'Level 3 — warmed up',      score: 300  },
+      { label: 'Level 5 — already sweaty', score: 600  },
+      { label: 'Level 7 — chaos',          score: 900  },
+      { label: 'Level 9 — pure hell',      score: 1200 },
+    ];
+
+    // Update the description text and colour whenever the slider moves.
+    // t = 0 at easy (cyan) and 1 at hell (red).
+    diffSlider.addEventListener('input', () => {
+      const info = DIFF_INFO[diffSlider.value - 1];
+      diffDesc.textContent = info.label;
+      const t = (diffSlider.value - 1) / 4;
+      diffDesc.style.color =
+        `rgb(${Math.round(t*255)},${Math.round(229*(1-t))},${Math.round(255*(1-t))})`;
+    });
+
+
+    // ═══════════════════════════════════════════════════════════════
+    //  INPUT — track which keys are held each frame
+    // ═══════════════════════════════════════════════════════════════
+
+    const keys = {};
+
+    document.addEventListener('keydown', e => {
+      keys[e.key] = true;
+      if ((e.key === ' ' || e.key === 'Enter') && !running) start();
+      // Prevent browser scrolling with arrow keys and space
+      if (['ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+    });
+    document.addEventListener('keyup', e => { keys[e.key] = false; });
+    btn.addEventListener('click', start);
+
+
+    // ═══════════════════════════════════════════════════════════════
+    //  GAME STATE — all variables that reset each new game
+    // ═══════════════════════════════════════════════════════════════
+
+    let score;       // numeric score; auto-increases with time; drives level
+    let best = 0;    // all-time best; survives between rounds
+    let lives;       // hull points remaining (max 5)
+    let ship;        // player: { x, y, vx, inv, flicker }
+    let rocks;       // array of falling asteroid objects
+    let sparks;      // array of explosion particle objects
+    let bullets;     // array of bullets fired by the gun power-up
+    let powerups;    // array of falling power-up pickup objects
+
+    let spawnT;      // countdown (s) until the next asteroid spawns
+    let pupSpawnT;   // countdown (s) until the next power-up drops
+
+    let shieldTimer; // seconds of shield remaining (0 = inactive)
+    let gunTimer;    // seconds of gun power remaining (0 = inactive)
+    let bulletCooldown; // seconds until the player can fire again (prevents spamming)
+
+    let nextLifeScore;  // score value at which the next bonus life is awarded
+    let bonusFlash;     // timer for the "EXTRA LIFE!" on-screen message
+
+    let lastT;       // timestamp of previous frame (used to compute dt)
+    let raf;         // requestAnimationFrame handle so we can cancel the loop
+    let running;     // true while the game loop is running
+
+
+    // ═══════════════════════════════════════════════════════════════
+    //  STARS — built once on page load; scrolled every frame
+    // ═══════════════════════════════════════════════════════════════
+
+    const stars = Array.from({length: 80}, () => ({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: Math.random() * 1.2,       // radius 0–1.2 px (tiny dots)
+      a: 0.2 + Math.random() * 0.5, // opacity varies per star
+      v: 8 + Math.random() * 18     // fall speed px/s — faster = feels closer
+    }));
+
+
+    // ═══════════════════════════════════════════════════════════════
+    //  HELPERS
+    // ═══════════════════════════════════════════════════════════════
+
+    // Zero-pad a number to 6 digits:  fmt(42) → "000042"
+    const fmt = n => String(Math.floor(n)).padStart(6, '0');
+
+    // Current level — increases every 150 score points
+    const lvl = () => Math.floor(score / 150) + 1;
+
+    // Asteroid speed multiplier — big jump per level plus a smooth in-level ramp
+    const spd = () => 1 + (lvl()-1)*0.28 + (score%150)*0.001;
+
+
+    // ═══════════════════════════════════════════════════════════════
+    //  START — resets everything and begins the game loop
+    // ═══════════════════════════════════════════════════════════════
+
+    function start() {
+      // Set score from the difficulty slider (higher score = higher opening level)
+      score = DIFF_INFO[diffSlider.value - 1].score;
+
+      lives  = 3;
+      rocks  = [];
+      sparks = [];
+      bullets  = [];
+      powerups = [];
+
+      spawnT    = 0;    // spawn the first rock immediately
+      pupSpawnT = 10;   // first power-up drops after 10 seconds
+
+      shieldTimer    = 0;
+      gunTimer       = 0;
+      bulletCooldown = 0;
+
+      // Award the first bonus life at 500 points above the starting score
+      nextLifeScore = score + 500;
+      bonusFlash    = 0;
+
+      ship = { x: W/2, y: H-70, vx: 0, inv: 0, flicker: 0 };
+
+      overlay.style.display = 'none';
+      cancelAnimationFrame(raf);
+      running = true;
+      raf = requestAnimationFrame(loop);
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════
+    //  END — called when lives hit 0
+    // ═══════════════════════════════════════════════════════════════
+
+    function end() {
+      running = false;
+      if (score > best) best = score;
+
+      document.getElementById('bs').textContent = fmt(best);
+      document.getElementById('result').textContent =
+        'Score: ' + fmt(score) + '  ·  Level ' + lvl();
+      overlay.querySelector('h2').textContent = 'DESTROYED';
+      btn.textContent = 'RETRY';
+      diffWrap.style.display = 'none'; // hide difficulty picker on retry screen
+      overlay.style.display  = 'flex';
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════
+    //  SPAWN ROCK — creates one asteroid and pushes it to rocks[]
+    // ═══════════════════════════════════════════════════════════════
+
+    function spawnRock() {
+      const lv = lvl();
+      const r  = 14 + Math.random() * 20; // radius 14–34 px
+
+      // Build the lumpy polygon vertices before the object literal.
+      // Array.from's map callback only receives (value, index) — NOT the array —
+      // so we store numPts in a variable instead of reading a.length inside the callback.
+      const numPts = 8 + Math.floor(Math.random() * 4); // 8–11 sides
+      const pts = Array.from({length: numPts}, (_, i) => {
+        const ang = (i / numPts) * Math.PI * 2; // evenly-spaced angle
+        const rad = 0.7 + Math.random() * 0.3;  // irregular radius fraction (0.7–1.0)
+        return [Math.cos(ang) * rad, Math.sin(ang) * rad]; // unit-circle point
+      });
+
+      rocks.push({
+        x:   r + Math.random() * (W - r*2), // random X, fully inside the canvas
+        y:   -r,                            // just above the top edge
+        r,                                  // radius used for drawing and collision
+        vx:  (Math.random()-0.5) * Math.min(40 + lv*15, 130), // lateral drift grows with level
+        vy:  (60 + Math.random()*80) * spd(),                  // fall speed scales with difficulty
+        rot: Math.random() * Math.PI * 2,                      // random starting angle
+        rv:  (Math.random()-0.5) * 2 * (1 + lv*0.1),          // rotation speed grows with level
+        pts,
+        col: Math.random() > 0.3 ? '#4a6a80' : '#6a4a55'      // blue-grey or red-grey
+      });
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════
+    //  SPAWN POWER-UP — drops a shield or gun pickup from the top
+    // ═══════════════════════════════════════════════════════════════
+
+    function spawnPowerup() {
+      const type = Math.random() < 0.5 ? 'shield' : 'gun'; // 50/50 chance of each type
+      powerups.push({
+        type,
+        x:   40 + Math.random() * (W - 80), // random X, with some padding from the edges
+        y:   -20,                            // start above the canvas
+        vy:  55 + Math.random() * 25,        // fall speed 55–80 px/s (slower than rocks)
+        bob: Math.random() * Math.PI * 2,    // starting phase for the gentle bob animation
+      });
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════
+    //  FIRE BULLET — shoots one bullet upward from the ship's nose
+    // ═══════════════════════════════════════════════════════════════
+
+    function fireBullet() {
+      bullets.push({
+        x:  ship.x,   // starts at the ship's current X position
+        y:  ship.y - 16, // starts at the nose of the ship (16 px above centre)
+        vy: -520      // travels upward at 520 px/s
+      });
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════
+    //  MAIN GAME LOOP — runs ~60 times per second
+    // ═══════════════════════════════════════════════════════════════
+
+    function loop(ts) {
+
+      // ── Delta time ────────────────────────────────────────────
+      // dt = seconds since the last frame.  Capped at 0.05 s so a
+      // tab switch or lag spike can't teleport objects.
+      if (!lastT) lastT = ts;
+      const dt = Math.min((ts - lastT) / 1000, 0.05);
+      lastT = ts;
+
+      score += dt * 10; // 10 points per second of survival
+      const lv = lvl(); // cache level for this frame
+
+
+      // ── Bonus life check ──────────────────────────────────────
+      // Award an extra life every 500 points (max 5 lives).
+      if (score >= nextLifeScore) {
+        nextLifeScore += 500; // set up the next milestone
+        if (lives < 5) {
+          lives++;
+          bonusFlash = 2.5; // show "EXTRA LIFE!" message for 2.5 seconds
+        }
+      }
+      if (bonusFlash > 0) bonusFlash -= dt; // count the flash timer down
+
+
+      // ── Power-up timers ───────────────────────────────────────
+      // Count shield and gun durations down each frame.
+      if (shieldTimer > 0) shieldTimer = Math.max(0, shieldTimer - dt);
+      if (gunTimer    > 0) gunTimer    = Math.max(0, gunTimer    - dt);
+      if (bulletCooldown > 0) bulletCooldown = Math.max(0, bulletCooldown - dt);
+
+      // Update the power-up HUD indicators
+      const shHud = document.getElementById('sh-hud');
+      const gnHud = document.getElementById('gn-hud');
+      if (shieldTimer > 0) {
+        shHud.style.display = 'inline';
+        document.getElementById('sh-t').textContent = shieldTimer.toFixed(1);
+      } else {
+        shHud.style.display = 'none';
+      }
+      if (gunTimer > 0) {
+        gnHud.style.display = 'inline';
+        document.getElementById('gn-t').textContent = gunTimer.toFixed(1);
+      } else {
+        gnHud.style.display = 'none';
+      }
+
+      // ── Update main HUD ───────────────────────────────────────
+      document.getElementById('sc').textContent = fmt(score);
+      document.getElementById('lv').textContent = String(lv).padStart(2,'0');
+      const danger = Math.min((lv-1)/9, 1); // 0.0 at level 1, 1.0 at level 10
+      document.getElementById('lv').style.color =
+        `rgb(255,${Math.round(154*(1-danger))},0)`; // orange → red
+      document.getElementById('hp').textContent =
+        '❤'.repeat(lives) + '🖤'.repeat(Math.max(0, 3 - lives));
+        // Note: max lives is 5, so we only show 3 hearts max for the lost-life display
+
+
+      // ── Clear canvas & draw background ───────────────────────
+      ctx.fillStyle = '#050a0f';
+      ctx.fillRect(0, 0, W, H);
+
+      // Faint retro grid lines
+      ctx.strokeStyle = 'rgba(0,229,255,0.03)';
+      ctx.lineWidth = 1;
+      for (let x=0; x<W; x+=40) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+      for (let y=0; y<H; y+=40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+
+
+      // ── Scroll stars ──────────────────────────────────────────
+      // Stars fall faster at higher levels to give a speed-up sensation.
+      const starSpeed = 1 + (lv-1) * 0.4;
+      stars.forEach(s => {
+        s.y += s.v * dt * starSpeed;
+        if (s.y > H) { s.y = 0; s.x = Math.random()*W; } // wrap to top
+        ctx.globalAlpha = s.a;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+
+
+      // ── Spawn asteroids ───────────────────────────────────────
+      spawnT -= dt;
+      if (spawnT <= 0) {
+        const interval = Math.max(0.12, 0.85 - (lv-1)*0.07); // shrinks per level, floors at 0.12 s
+        spawnT = interval * (0.6 + Math.random()*0.7);        // add randomness
+        const count = lv>=8 ? 3 : (lv>=4 && Math.random()<0.5) ? 2 : 1; // more rocks at higher levels
+        for (let i=0; i<count; i++) spawnRock();
+      }
+
+
+      // ── Spawn power-ups ───────────────────────────────────────
+      // Power-ups drop every 12–20 seconds (random interval)
+      pupSpawnT -= dt;
+      if (pupSpawnT <= 0) {
+        pupSpawnT = 12 + Math.random() * 8; // next power-up in 12–20 seconds
+        spawnPowerup();
+      }
+
+
+      // ── Draw & update power-up pickups ────────────────────────
+      powerups = powerups.filter(p => p.y < H + 30); // remove ones that fell off-screen
+      powerups.forEach(p => {
+        p.y   += p.vy * dt;     // fall downward
+        p.bob += dt * 3;        // advance the bob animation angle (3 rad/s)
+
+        const bobX = Math.sin(p.bob) * 4; // gentle left-right sway ±4 px
+
+        ctx.save();
+        ctx.translate(p.x + bobX, p.y);
+
+        if (p.type === 'shield') {
+          // Shield pickup: cyan hexagon with an "S" in the middle
+          ctx.strokeStyle = '#00e5ff';
+          ctx.fillStyle   = 'rgba(0,229,255,0.15)'; // faint fill
+          ctx.lineWidth   = 1.5;
+          ctx.beginPath();
+          for (let i=0; i<6; i++) {            // draw a regular hexagon
+            const a = (i/6)*Math.PI*2 - Math.PI/6;
+            i===0 ? ctx.moveTo(Math.cos(a)*14, Math.sin(a)*14)
+                  : ctx.lineTo(Math.cos(a)*14, Math.sin(a)*14);
+          }
+          ctx.closePath();
+          ctx.fill(); ctx.stroke();
+          ctx.fillStyle = '#00e5ff';
+          ctx.font = 'bold 11px Space Mono';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('S', 0, 0); // label so the player knows what it is
+
+        } else {
+          // Gun pickup: yellow diamond with a "G" in the middle
+          ctx.strokeStyle = '#ffdf80';
+          ctx.fillStyle   = 'rgba(255,223,128,0.15)';
+          ctx.lineWidth   = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(0, -14); ctx.lineTo(14, 0);  // draw a diamond
+          ctx.lineTo(0,  14); ctx.lineTo(-14, 0);
+          ctx.closePath();
+          ctx.fill(); ctx.stroke();
+          ctx.fillStyle = '#ffdf80';
+          ctx.font = 'bold 11px Space Mono';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('G', 0, 0);
+        }
+
+        ctx.restore();
+      });
+
+
+      // ── Update & draw asteroids ───────────────────────────────
+      rocks = rocks.filter(r => r.y < H + r.r*2); // cull off-screen rocks
+      rocks.forEach(r => {
+        r.x   += r.vx * dt;
+        r.y   += r.vy * dt;
+        r.rot += r.rv * dt;
+
+        ctx.save();
+        ctx.translate(r.x, r.y);
+        ctx.rotate(r.rot);
+        ctx.beginPath();
+        r.pts.forEach(([px,py],i) =>
+          i ? ctx.lineTo(px*r.r, py*r.r) : ctx.moveTo(px*r.r, py*r.r)
+        );
+        ctx.closePath();
+        ctx.fillStyle   = r.col;
+        ctx.fill();
+        ctx.strokeStyle = '#8aacbe'; ctx.lineWidth = 1; ctx.stroke();
+        ctx.restore();
+      });
+
+
+      // ── Update & draw bullets ─────────────────────────────────
+      bullets = bullets.filter(b => b.y > -10); // remove bullets that left the top
+      bullets.forEach(b => {
+        b.y += b.vy * dt; // move upward (vy is negative)
+
+        // Draw bullet: a small bright yellow rectangle
+        ctx.fillStyle = '#ffdf80';
+        ctx.fillRect(b.x - 2, b.y - 8, 4, 12); // 4px wide, 12px tall
+
+        // Check if this bullet hits any asteroid
+        rocks = rocks.filter(r => {
+          const hit = Math.hypot(r.x - b.x, r.y - b.y) < r.r + 4; // 4px bullet radius
+          if (hit) {
+            // Spawn green sparks to show the asteroid was destroyed (not just hit)
+            for (let i=0; i<12; i++) sparks.push({
+              x:    r.x, y: r.y,
+              vx:   (Math.random()-0.5)*160,
+              vy:   (Math.random()-0.5)*160,
+              life: 1,
+              r:    1.5 + Math.random()*2,
+              col:  i%2===0 ? '#8aacbe' : '#c8e6f0' // rock-coloured debris
+            });
+            b.y = -100; // move bullet off-screen so it gets filtered out next frame
+          }
+          return !hit; // keep the rock only if it was NOT hit
+        });
+      });
+
+
+      // ── Update & draw sparks ──────────────────────────────────
+      sparks = sparks.filter(p => p.life > 0);
+      sparks.forEach(p => {
+        p.x   += p.vx * dt;
+        p.y   += p.vy * dt;
+        p.vy  += 80 * dt;   // gravity
+        p.life -= dt * 2.5; // fade out over ~0.4 s
+        ctx.globalAlpha = Math.max(0, p.life);
+        ctx.fillStyle = p.col;
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+
+
+      // ── Move the ship ─────────────────────────────────────────
+      ship.inv     = Math.max(0, ship.inv - dt); // count down hit-invincibility timer
+      ship.flicker += dt * 18;                   // advance thruster animation angle
+
+      if      (keys['ArrowLeft']  || keys['a'] || keys['A']) ship.vx = -300;
+      else if (keys['ArrowRight'] || keys['d'] || keys['D']) ship.vx =  300;
+      else    ship.vx *= 0.7; // friction: decelerate when no key held
+
+      ship.x = Math.max(22, Math.min(W-22, ship.x + ship.vx * dt)); // clamp to canvas
+
+      // Fire a bullet when Space is held and the gun is active and cooled down
+      if ((keys[' ']) && gunTimer > 0 && bulletCooldown <= 0) {
+        fireBullet();
+        bulletCooldown = 0.18; // 0.18 s between shots — fast but not instant
+      }
+
+
+      // ── Draw the ship ─────────────────────────────────────────
+      // Skip drawing on alternating "blink ticks" while hit-invincible.
+      // floor(inv*10)%2 flips between 0 and 1 ten times per second.
+      const blinking = ship.inv > 0 && Math.floor(ship.inv*10)%2 === 0;
+      if (!blinking) {
+        ctx.save();
+        ctx.translate(ship.x, ship.y);
+
+        // Shield ring: glowing cyan circle drawn behind the ship when active
+        if (shieldTimer > 0) {
+          const pulse = 0.5 + Math.sin(ts*0.006)*0.3; // pulsing opacity 0.2–0.8
+          ctx.strokeStyle = '#00e5ff';
+          ctx.lineWidth   = 2;
+          ctx.globalAlpha = pulse;
+          ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI*2); ctx.stroke();
+          ctx.globalAlpha = pulse * 0.15;
+          ctx.fillStyle = '#00e5ff';
+          ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI*2); ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+
+        // Gun indicator: a small yellow glow at the nose when armed
+        if (gunTimer > 0) {
+          ctx.fillStyle   = 'rgba(255,223,128,0.35)';
+          ctx.globalAlpha = 0.6 + Math.sin(ts*0.01)*0.4; // flicker
+          ctx.beginPath(); ctx.arc(0, -16, 5, 0, Math.PI*2); ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+
+        // Thruster flame (animated by flicker angle)
+        const thrustLen = 6 + Math.sin(ship.flicker) * 3; // pulsing length 3–9 px
+        ctx.fillStyle   = '#ff6a00';
+        ctx.globalAlpha = 0.8;
+        ctx.beginPath();
+        ctx.moveTo(-6, 14); ctx.lineTo(0, 14+thrustLen); ctx.lineTo(6, 14);
+        ctx.fill();
+
+        // Ship body: simple arrowhead polygon
+        ctx.globalAlpha = 1;
+        ctx.fillStyle   = '#00e5ff';
+        ctx.beginPath();
+        ctx.moveTo(0,-16); ctx.lineTo(13,14); ctx.lineTo(8,10);
+        ctx.lineTo(0,14);  ctx.lineTo(-8,10); ctx.lineTo(-13,14);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.restore();
+      }
+
+
+      // ── "EXTRA LIFE!" flash message ───────────────────────────
+      if (bonusFlash > 0) {
+        // Fade the text in and out: full opacity for most of the duration, then fade
+        const alpha = Math.min(bonusFlash, 1);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle   = '#ff4d6d'; // red-pink to match the heart colour
+        ctx.font        = 'bold 16px Space Mono';
+        ctx.textAlign   = 'center';
+        ctx.fillText('+ EXTRA LIFE', W/2, H/2 - 20);
+        ctx.globalAlpha = 1;
+      }
+
+
+      // ── Collect power-ups ─────────────────────────────────────
+      // Check if the ship's circle overlaps any power-up pickup.
+      powerups = powerups.filter(p => {
+        const dist = Math.hypot(p.x - ship.x, p.y - ship.y);
+        if (dist < 26) { // 26 px collection radius (generous for playability)
+          if (p.type === 'shield') shieldTimer = 8;  // shield lasts 8 seconds
+          else                     gunTimer    = 12; // gun lasts 12 seconds
+          return false; // remove the pickup from the array (it's been collected)
+        }
+        return true; // keep it — not yet collected
+      });
+
+
+      // ── Collision: ship vs asteroids ──────────────────────────
+      // Skip entirely if the ship has hit-invincibility OR shield is active.
+      // Shield blocks hits completely — the player keeps their lives.
+      if (ship.inv <= 0 && shieldTimer <= 0) {
+        for (const r of rocks) {
+          if (Math.hypot(r.x - ship.x, r.y - ship.y) < r.r + 11) {
+            lives--;
+            ship.inv = 2.0; // 2 s of hit-invincibility after each impact
+
+            // Explosion sparks
+            const cols = ['#ff4d6d','#ff9a3c','#ffdf80','#fff'];
+            for (let i=0; i<18; i++) sparks.push({
+              x: ship.x, y: ship.y,
+              vx: (Math.random()-0.5)*200,
+              vy: (Math.random()-0.5)*200 - 60,
+              life: 1, r: 2+Math.random()*3,
+              col: cols[i%4]
+            });
+
+            if (lives <= 0) { end(); return; } // no hull left — game over
+            break; // only one hit per frame
+          }
+        }
+      } else if (ship.inv <= 0 && shieldTimer > 0) {
+        // Shield is active: check for hits so we can play a visual effect,
+        // but do NOT reduce lives — the shield absorbs the impact.
+        for (const r of rocks) {
+          if (Math.hypot(r.x - ship.x, r.y - ship.y) < r.r + 22) { // 22 = shield ring radius
+            shieldTimer = 0; // shield is consumed by the hit
+            ship.inv    = 0.5; // brief flash so the player sees it was hit
+            // Deflection sparks radiate outward from the shield ring
+            for (let i=0; i<10; i++) sparks.push({
+              x: ship.x + Math.cos(i/10*Math.PI*2)*22,
+              y: ship.y + Math.sin(i/10*Math.PI*2)*22,
+              vx: Math.cos(i/10*Math.PI*2)*120,
+              vy: Math.sin(i/10*Math.PI*2)*120,
+              life: 1, r: 2, col: '#00e5ff' // cyan sparks for a "energy shield" feel
+            });
+            break;
+          }
+        }
+      }
+
+      raf = requestAnimationFrame(loop); // schedule the next frame
+    }
+
+  </script>
+</body>
+</html>
